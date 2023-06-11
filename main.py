@@ -2,15 +2,16 @@ import sys
 import requests
 import logging
 import datetime as dt
+import time
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, ContextTypes, MessageHandler,
     filters, PicklePersistence
 )
 
-from config import HOST, TOKEN, UPDATE_FREQUENCY, LOG_NAME
+from config import HOST, TOKEN, UPDATE_FREQUENCY, LOG_NAME, MESSAGE_HISTORY
 from constants import (ST_TRACKING, ST_PAUSED, ST_WAIT_GAME_ID, LANG_RU, LANG_EN,
-                       PHASE_DRAFTING, PHASE_RESEARCH, TURN_PASS)
+                       MESSAGE_DELETE_TIMEOUT, PHASE_DRAFTING, PHASE_RESEARCH, TURN_PASS)
 from game_data import GameData
 from l18n import (l18n, get_turn_type_str, LK_WAIT_GAME_ID, LK_BAD_GAME_ID, LK_WILL_PASS, LK_WILL_NOT_PASS,
                   LK_PASSED, LK_START_GONE_WRONG, LK_PAUSE, LK_WILL_TAG, LK_TAG_COMMAND_ERROR, LK_WILL_NOT_TAG,
@@ -103,7 +104,7 @@ async def schedule_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logging.info("Setting users_info, now is {}".format(data.users_info))
         except IndexError:
             # TODO l18n
-            msg = ("Нужны твое имя в игре и id (13 символов). "
+            msg = ("Нужны твое имя в игре и id (12-13 символов). "
                    "Для этого скопируй id из адресной строки и скажи /pass <ник> <id>. "
                    "Потом можно будет просто писать /pass")
             await update.effective_message.reply_text(msg)
@@ -156,8 +157,16 @@ async def callback_timer(context: ContextTypes.DEFAULT_TYPE):
                 who = address_players(context.chat_data['GAME'], [p[0] for p in players])
                 reply_text = f"{who}, {turn_type_str}"
                 data.last_ping = players
-                await context.bot.send_message(chat_id=context.job.chat_id,
+                msg = await context.bot.send_message(chat_id=context.job.chat_id,
                                                text=reply_text)
+                data.message_ids_queue.append((msg.message_id, time.time()))
+                while len(data.message_ids_queue) > MESSAGE_HISTORY:
+                    hmsg = data.message_ids_queue.pop(0)
+                    if (time.time() - hmsg[1]) < MESSAGE_DELETE_TIMEOUT:
+                        await context.bot.delete_message(chat_id=context.job.chat_id,
+                                                         message_id=hmsg[0])
+
+
 
 
 async def start_tracking(chat_id, game_id, context: ContextTypes.DEFAULT_TYPE, do_restore=True):

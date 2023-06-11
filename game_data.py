@@ -11,6 +11,7 @@ class GameData:
         self.users_tag = {}
         self.users_info = {}  # keys are tg usernames
         self.scheduled_turns = {}
+        self.message_ids_queue = []
         self.tft = TerraformingTracker()
 
     def __str__(self):
@@ -21,6 +22,8 @@ class GameData:
         """ for handling class structure updates during single game """
         if not hasattr(self, 'scheduled_turns'):
             self.scheduled_turns = {}
+        if not hasattr(self, 'message_ids_queue '):
+            self.message_ids_queue = []
         return self
 
 
