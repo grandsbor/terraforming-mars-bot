@@ -3,8 +3,9 @@ from tf_tracker import TerraformingTracker
 
 
 class GameData:
-    def __init__(self, state, game_id=None, last_ping=None):
+    def __init__(self, state, host=None, game_id=None, last_ping=None):
         self.state = state
+        self.host = host
         self.game_id = game_id
         self.last_ping = last_ping
         self.ping_delay_min = DEFAULT_DELAY
@@ -15,7 +16,7 @@ class GameData:
         self.tft = TerraformingTracker()
 
     def __str__(self):
-        return f"GameData(state={self.state}, game_id={self.game_id}, last_ping={self.last_ping}, " \
+        return f"GameData(state={self.state}, host={self.host}, game_id={self.game_id}, last_ping={self.last_ping}, " \
                f"users_info={self.users_info}, scheduled_turns={self.scheduled_turns}"
 
     def restore(self):

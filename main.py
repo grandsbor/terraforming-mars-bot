@@ -9,7 +9,7 @@ from telegram.ext import (
     filters, PicklePersistence
 )
 
-from config import HOST, TOKEN, UPDATE_FREQUENCY, LOG_NAME, MESSAGE_HISTORY
+from config import TOKEN, UPDATE_FREQUENCY, LOG_NAME, MESSAGE_HISTORY
 from constants import (ST_TRACKING, ST_PAUSED, ST_WAIT_GAME_ID, LANG_RU, LANG_EN,
                        MESSAGE_DELETE_TIMEOUT, PHASE_DRAFTING, PHASE_RESEARCH, TURN_PASS)
 from game_data import GameData
@@ -17,7 +17,7 @@ from l18n import (l18n, get_turn_type_str, LK_WAIT_GAME_ID, LK_BAD_GAME_ID, LK_W
                   LK_PASSED, LK_START_GONE_WRONG, LK_PAUSE, LK_WILL_TAG, LK_TAG_COMMAND_ERROR, LK_WILL_NOT_TAG,
                   LK_NEVER_TAGGED, LK_DELAY_SET, LK_DELAY_COMMAND_ERROR, LK_START_COMMAND_ERROR, LK_LANG_SWITCHED,
                   LK_SETLANG_COMMAND_ERROR, LK_UNEXPECTED_MESSAGE)
-from util import build_api_url, looks_like_player_id
+from util import build_api_url, looks_like_player_id, try_parse_game_url
 
 
 class TurnMaker:
@@ -35,10 +35,10 @@ class TurnMaker:
         for username, (player_name, player_id) in game_data.users_info.items():
             if player_name == ingame_player_name and game_data.scheduled_turns.get(username) == TURN_PASS:
                 # prepare request param
-                url = build_api_url('player', player_id)
+                url = build_api_url(game_data.host, 'player', player_id)
                 reply = requests.get(url).json()
                 pass_idx = TurnMaker.find_pass_option_index(reply)
-                post_url = f"http://{HOST}/player/input?id={player_id}"
+                post_url = f"http://{game_data.host}/player/input?id={player_id}"
                 reply = requests.post(post_url, json={
                     'type': 'or',
                     'index': pass_idx,
@@ -63,8 +63,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(l18n(context, LK_WAIT_GAME_ID))
 
 
-def get_game_status(game_id):
-    url = build_api_url("spectator", game_id)
+def get_game_status(host, game_id):
+    url = build_api_url(host, "spectator", game_id)
     try:
         return requests.get(url).json()
     except RuntimeError:
@@ -132,7 +132,7 @@ async def unschedule_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def callback_timer(context: ContextTypes.DEFAULT_TYPE):
     data: GameData = context.job.data
     logging.info("Timer event: gamedata = {}".format(data))
-    status = get_game_status(data.game_id)
+    status = get_game_status(data.host, data.game_id)
     if not status:
         return
 
@@ -173,8 +173,8 @@ async def callback_timer(context: ContextTypes.DEFAULT_TYPE):
 
 
 
-async def start_tracking(chat_id, game_id, context: ContextTypes.DEFAULT_TYPE, do_restore=True):
-    st = get_game_status(game_id)
+async def start_tracking(chat_id, host, game_id, context: ContextTypes.DEFAULT_TYPE, do_restore=True):
+    st = get_game_status(host, game_id)
     if st:
         players = get_current_players(st)
         whose = (f"ходит {players[0][0]}"
@@ -207,9 +207,9 @@ async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def unpause(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        game_id = get_game_data(context).game_id
+        data = get_game_data(context)
         await context.job_queue.start()
-        await start_tracking(update.effective_chat.id, game_id, context)
+        await start_tracking(update.effective_chat.id, data.host, data.game_id, context)
     except KeyError:
         await start(update, context)
 
@@ -255,8 +255,10 @@ async def set_delay(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if get_game_data(context).state == ST_WAIT_GAME_ID:
-        if looks_like_player_id(text):
-            await set_id(update, context, text)
+        parsed = try_parse_game_url(text)
+        if parsed:
+            host, game_id = parsed
+            await set_id(update, context, host, game_id)
     else:
         orig = update.message.reply_to_message
         me = await context.bot.get_me()
@@ -264,11 +266,11 @@ async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.effective_message.reply_text(l18n(context, LK_UNEXPECTED_MESSAGE))
 
 
-async def set_id(update: Update, context: ContextTypes.DEFAULT_TYPE, game_id):
+async def set_id(update: Update, context: ContextTypes.DEFAULT_TYPE, host, game_id):
     assert context.chat_data['GAME'].state == ST_WAIT_GAME_ID
     try:
-        context.chat_data['GAME'] = GameData(game_id=game_id, state=None)
-        await start_tracking(update.effective_chat.id, game_id, context, do_restore=False)
+        context.chat_data['GAME'] = GameData(game_id=game_id, host=host, state=None)
+        await start_tracking(update.effective_chat.id, host, game_id, context, do_restore=False)
     except RuntimeError:
         reply_text = l18n(context, LK_START_COMMAND_ERROR)
         await context.bot.send_message(chat_id=update.effective_chat.id,
