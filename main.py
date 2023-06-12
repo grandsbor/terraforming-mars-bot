@@ -54,6 +54,10 @@ class TurnMaker:
         return False
 
 
+def get_game_data(context: ContextTypes.DEFAULT_TYPE) -> GameData:
+    return context.chat_data['GAME']
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.chat_data['GAME'] = GameData(ST_WAIT_GAME_ID)
     await update.message.reply_text(l18n(context, LK_WAIT_GAME_ID))
@@ -92,7 +96,7 @@ async def schedule_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logging.info("Called schedule_pass()")
     # check if we already know id of the user
     user = update.message.from_user
-    data: GameData = context.chat_data['GAME']
+    data: GameData = get_game_data(context)
     logging.info("Current users_info = {}".format(data.users_info))
     user_info = data.users_info.get(user.username)
     # ask to retry with id if unknown and not given
@@ -119,7 +123,7 @@ async def schedule_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def unschedule_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # NOTE: in fact unschedules any actions
-    data: GameData = context.chat_data['GAME']
+    data: GameData = get_game_data(context)
     username = update.message.from_user.username
     data.scheduled_turns.pop(username)
     await update.effective_message.reply_text(l18n(context, LK_WILL_NOT_PASS))
@@ -154,7 +158,7 @@ async def callback_timer(context: ContextTypes.DEFAULT_TYPE):
         else:
             last_turn = max([dt.datetime.fromtimestamp(p[1] // 1000) for p in players])
             if (dt.datetime.now() - last_turn) > dt.timedelta(minutes=data.ping_delay_min):
-                who = address_players(context.chat_data['GAME'], [p[0] for p in players])
+                who = address_players(get_game_data(context), [p[0] for p in players])
                 reply_text = f"{who}, {turn_type_str}"
                 data.last_ping = players
                 msg = await context.bot.send_message(chat_id=context.job.chat_id,
@@ -177,12 +181,13 @@ async def start_tracking(chat_id, game_id, context: ContextTypes.DEFAULT_TYPE, d
                  if st["game"]["phase"] not in (PHASE_DRAFTING, PHASE_RESEARCH)
                  else "драфт")
         reply_text = f"Ок, слежу за игрой id={game_id}, сейчас {whose}"  # TODO l18n
+        game_data = get_game_data(context)
         if do_restore:
-            context.chat_data['GAME'].restore()
-        context.chat_data['GAME'].state = ST_TRACKING
+            game_data.restore()
+        game_data.state = ST_TRACKING
         context.job_queue.run_repeating(
             callback_timer, UPDATE_FREQUENCY,
-            data=context.chat_data['GAME'],
+            data=game_data,
             chat_id=chat_id
         )
     else:
@@ -191,21 +196,21 @@ async def start_tracking(chat_id, game_id, context: ContextTypes.DEFAULT_TYPE, d
 
 
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'GAME' in context.chat_data:
-        context.chat_data['GAME'].state = ST_PAUSED
+    try:
+        get_game_data(context).state = ST_PAUSED
         await context.job_queue.stop()
         await context.bot.send_message(chat_id=update.effective_chat.id,
                                        text=l18n(context, LK_PAUSE))
-    else:
+    except KeyError:
         await start(update, context)
 
 
 async def unpause(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'GAME' in context.chat_data:
-        game_id = context.chat_data['GAME'].game_id
+    try:
+        game_id = get_game_data(context).game_id
         await context.job_queue.start()
         await start_tracking(update.effective_chat.id, game_id, context)
-    else:
+    except KeyError:
         await start(update, context)
 
 
@@ -214,7 +219,7 @@ async def turn_on_tagging(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert 'GAME' in context.chat_data
     try:
         ingame_name = context.args[0]
-        data: GameData = context.chat_data['GAME']
+        data: GameData = get_game_data(context)
         data.users_tag[ingame_name] = user.username
         if user.username not in data.users_info:
             data.users_info[user.username] = [ingame_name, None]
@@ -229,9 +234,10 @@ async def turn_on_tagging(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def turn_off_tagging(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
-    found = context.chat_data['GAME'].users_info.get(user.username)
+    game_data = get_game_data(context)
+    found = game_data.users_info.get(user.username)
     if found:
-        context.chat_data['GAME'].users_tag.pop(found[0])
+        game_data.users_tag.pop(found[0])
         await update.effective_message.reply_text(l18n(context, LK_WILL_NOT_TAG))
     else:
         await update.effective_message.reply_text(l18n(context, LK_NEVER_TAGGED))
@@ -240,7 +246,7 @@ async def turn_off_tagging(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def set_delay(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         v = int(context.args[0])
-        context.chat_data['GAME'].ping_delay_min = v
+        get_game_data(context).ping_delay_min = v
         await update.effective_message.reply_text(l18n(context, LK_DELAY_SET).format(v))
     except (IndexError, ValueError):
         await update.effective_message.reply_text(l18n(context, LK_DELAY_COMMAND_ERROR))
@@ -248,7 +254,7 @@ async def set_delay(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    if context.chat_data['GAME'].state == ST_WAIT_GAME_ID:
+    if get_game_data(context).state == ST_WAIT_GAME_ID:
         if looks_like_player_id(text):
             await set_id(update, context, text)
 
