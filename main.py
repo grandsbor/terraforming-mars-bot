@@ -67,7 +67,7 @@ def get_game_status(host, game_id):
     url = build_api_url(host, "spectator", game_id)
     try:
         return requests.get(url).json()
-    except RuntimeError:
+    except Exception:
         pass
 
 
@@ -171,8 +171,6 @@ async def callback_timer(context: ContextTypes.DEFAULT_TYPE):
                                                          message_id=hmsg[0])
 
 
-
-
 async def start_tracking(chat_id, host, game_id, context: ContextTypes.DEFAULT_TYPE, do_restore=True):
     st = get_game_status(host, game_id)
     if st:
@@ -190,9 +188,9 @@ async def start_tracking(chat_id, host, game_id, context: ContextTypes.DEFAULT_T
             data=game_data,
             chat_id=chat_id
         )
+        await context.bot.send_message(chat_id=chat_id, text=reply_text)
     else:
-        reply_text = l18n(context, LK_START_GONE_WRONG)
-    await context.bot.send_message(chat_id=chat_id, text=reply_text)
+        raise RuntimeError()
 
 
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
