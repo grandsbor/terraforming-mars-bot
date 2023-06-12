@@ -16,7 +16,7 @@ from game_data import GameData
 from l18n import (l18n, get_turn_type_str, LK_WAIT_GAME_ID, LK_BAD_GAME_ID, LK_WILL_PASS, LK_WILL_NOT_PASS,
                   LK_PASSED, LK_START_GONE_WRONG, LK_PAUSE, LK_WILL_TAG, LK_TAG_COMMAND_ERROR, LK_WILL_NOT_TAG,
                   LK_NEVER_TAGGED, LK_DELAY_SET, LK_DELAY_COMMAND_ERROR, LK_START_COMMAND_ERROR, LK_LANG_SWITCHED,
-                  LK_SETLANG_COMMAND_ERROR)
+                  LK_SETLANG_COMMAND_ERROR, LK_UNEXPECTED_MESSAGE)
 from util import build_api_url, looks_like_player_id
 
 
@@ -257,6 +257,11 @@ async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if get_game_data(context).state == ST_WAIT_GAME_ID:
         if looks_like_player_id(text):
             await set_id(update, context, text)
+    else:
+        orig = update.message.reply_to_message
+        me = await context.bot.get_me()
+        if orig.from_user.id == me.id:
+            await update.effective_message.reply_text(l18n(context, LK_UNEXPECTED_MESSAGE))
 
 
 async def set_id(update: Update, context: ContextTypes.DEFAULT_TYPE, game_id):

@@ -20,6 +20,7 @@ LK_DELAY_COMMAND_ERROR = "delay_command_error"
 LK_START_COMMAND_ERROR = "start_command_error"
 LK_LANG_SWITCHED = "lang_switched"
 LK_SETLANG_COMMAND_ERROR = "setlang_command_error"
+LK_UNEXPECTED_MESSAGE = "unexpected_message"
 
 MESSAGES = {
     LK_WAIT_GAME_ID: {
@@ -89,6 +90,10 @@ MESSAGES = {
     LK_SETLANG_COMMAND_ERROR: {
         LANG_RU: f"Используй так: /setlang <{LANG_RU}|{LANG_EN}>",
         LANG_EN: f"Use like this: /setlang <{LANG_RU}|{LANG_EN}>"
+    },
+    LK_UNEXPECTED_MESSAGE: {
+        LANG_RU: "Не знаю, что делать с этим сообщением. Возможно, игра не начата",
+        LANG_EN: "I don't know what to do with this message, maybe you should start the game"
     }
 }
 
