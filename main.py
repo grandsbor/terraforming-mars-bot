@@ -17,6 +17,7 @@ from l18n import (l18n, get_turn_type_str, LK_WAIT_GAME_ID, LK_BAD_GAME_ID, LK_W
                   LK_PASSED, LK_START_GONE_WRONG, LK_PAUSE, LK_WILL_TAG, LK_TAG_COMMAND_ERROR, LK_WILL_NOT_TAG,
                   LK_NEVER_TAGGED, LK_DELAY_SET, LK_DELAY_COMMAND_ERROR, LK_START_COMMAND_ERROR, LK_LANG_SWITCHED,
                   LK_SETLANG_COMMAND_ERROR, LK_UNEXPECTED_MESSAGE)
+from newgame import GameCreator
 from util import build_api_url, looks_like_player_id, try_parse_game_url
 
 
@@ -52,6 +53,16 @@ class TurnMaker:
                 game_data.scheduled_turns.pop(username)
                 return True
         return False
+
+
+async def new_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(context.args) == 0:
+        await update.message.reply_text(GameCreator.get_usage())
+    else:
+        creator = context.chat_data['CREATOR'] = GameCreator(int(context.args[0]))
+        await context.bot.send_message(chat_id=update.effective_chat.id,
+                                       text=creator.get_header())
+        await update.message.reply_text(creator.get_message())
 
 
 def get_game_data(context: ContextTypes.DEFAULT_TYPE) -> GameData:
@@ -250,20 +261,6 @@ async def set_delay(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(l18n(context, LK_DELAY_COMMAND_ERROR))
 
 
-async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    if get_game_data(context).state == ST_WAIT_GAME_ID:
-        parsed = try_parse_game_url(text)
-        if parsed:
-            host, game_id = parsed
-            await set_id(update, context, host, game_id)
-    else:
-        orig = update.message.reply_to_message
-        me = await context.bot.get_me()
-        if orig.from_user.id == me.id:
-            await update.effective_message.reply_text(l18n(context, LK_UNEXPECTED_MESSAGE))
-
-
 async def set_id(update: Update, context: ContextTypes.DEFAULT_TYPE, host, game_id):
     assert context.chat_data['GAME'].state == ST_WAIT_GAME_ID
     try:
@@ -273,6 +270,28 @@ async def set_id(update: Update, context: ContextTypes.DEFAULT_TYPE, host, game_
         reply_text = l18n(context, LK_START_COMMAND_ERROR)
         await context.bot.send_message(chat_id=update.effective_chat.id,
                                        text=reply_text)
+
+
+async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if get_game_data(context).state == ST_WAIT_GAME_ID:
+        parsed = try_parse_game_url(text)
+        if parsed:
+            host, game_id = parsed
+            await set_id(update, context, host, game_id)
+    elif (creator := context.chat_data.get('CREATOR')) and not creator.started:
+        try:
+            creator.consume_message(text)
+            await update.effective_message.reply_text(creator.get_message())
+        except Exception:
+            await update.effective_message.reply_text("Что-то пошло не так, проверьте формат и название цвета/опции")
+        if creator.started:
+            context.chat_data['GAME'] = GameData(ST_WAIT_GAME_ID)
+            await set_id(update, context, creator.host, creator.game_id)
+    elif orig := update.message.reply_to_message:
+        me = await context.bot.get_me()
+        if orig.from_user.id == me.id:
+            await update.effective_message.reply_text(l18n(context, LK_UNEXPECTED_MESSAGE))
 
 
 async def set_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -297,6 +316,7 @@ def main():
     msg_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_msg)
     app.add_handler(msg_handler)
 
+    app.add_handler(CommandHandler(["new"], new_game))
     app.add_handler(CommandHandler(["start"], start))
     app.add_handler(CommandHandler(["pause"], pause))
     app.add_handler(CommandHandler(["restart", "unpause"], unpause))
