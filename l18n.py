@@ -20,15 +20,16 @@ LK_DELAY_COMMAND_ERROR = "delay_command_error"
 LK_START_COMMAND_ERROR = "start_command_error"
 LK_LANG_SWITCHED = "lang_switched"
 LK_SETLANG_COMMAND_ERROR = "setlang_command_error"
+LK_UNEXPECTED_MESSAGE = "unexpected_message"
 
 MESSAGES = {
     LK_WAIT_GAME_ID: {
-        LANG_RU: "Привет, дайте мне id наблюдателя игры",
-        LANG_EN: "Hi, give me the spectator id",
+        LANG_RU: "Привет, дайте мне ссылку наблюдателя игры",
+        LANG_EN: "Hi, now please give me the spectator link",
     },
     LK_BAD_GAME_ID: {
-        LANG_RU: "Это не похоже на id, попробуй ещё раз",
-        LANG_EN: "That doesn't look like a valid id, try again",
+        LANG_RU: "Это не похоже на правильную ссылку, попробуй ещё раз",
+        LANG_EN: "That doesn't look like a valid link, try again",
     },
     LK_WILL_PASS: {
         LANG_RU: "Ок, сделаю за тебя пас!",
@@ -89,6 +90,10 @@ MESSAGES = {
     LK_SETLANG_COMMAND_ERROR: {
         LANG_RU: f"Используй так: /setlang <{LANG_RU}|{LANG_EN}>",
         LANG_EN: f"Use like this: /setlang <{LANG_RU}|{LANG_EN}>"
+    },
+    LK_UNEXPECTED_MESSAGE: {
+        LANG_RU: "Не знаю, что делать с этим сообщением. Возможно, игра не начата",
+        LANG_EN: "I don't know what to do with this message, maybe you should start the game"
     }
 }
 

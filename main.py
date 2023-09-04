@@ -2,21 +2,23 @@ import sys
 import requests
 import logging
 import datetime as dt
+import time
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, ContextTypes, MessageHandler,
     filters, PicklePersistence
 )
 
-from config import HOST, TOKEN, UPDATE_FREQUENCY, LOG_NAME
+from config import TOKEN, UPDATE_FREQUENCY, LOG_NAME, MESSAGE_HISTORY
 from constants import (ST_TRACKING, ST_PAUSED, ST_WAIT_GAME_ID, LANG_RU, LANG_EN,
-                       PHASE_DRAFTING, PHASE_RESEARCH, TURN_PASS)
+                       MESSAGE_DELETE_TIMEOUT, PHASE_DRAFTING, PHASE_RESEARCH, TURN_PASS)
 from game_data import GameData
 from l18n import (l18n, get_turn_type_str, LK_WAIT_GAME_ID, LK_BAD_GAME_ID, LK_WILL_PASS, LK_WILL_NOT_PASS,
                   LK_PASSED, LK_START_GONE_WRONG, LK_PAUSE, LK_WILL_TAG, LK_TAG_COMMAND_ERROR, LK_WILL_NOT_TAG,
                   LK_NEVER_TAGGED, LK_DELAY_SET, LK_DELAY_COMMAND_ERROR, LK_START_COMMAND_ERROR, LK_LANG_SWITCHED,
-                  LK_SETLANG_COMMAND_ERROR)
-from util import build_api_url, looks_like_player_id
+                  LK_SETLANG_COMMAND_ERROR, LK_UNEXPECTED_MESSAGE)
+from newgame import GameCreator
+from util import build_api_url, looks_like_player_id, try_parse_game_url
 
 
 class TurnMaker:
@@ -34,10 +36,10 @@ class TurnMaker:
         for username, (player_name, player_id) in game_data.users_info.items():
             if player_name == ingame_player_name and game_data.scheduled_turns.get(username) == TURN_PASS:
                 # prepare request param
-                url = build_api_url('player', player_id)
+                url = build_api_url(game_data.host, 'player', player_id)
                 reply = requests.get(url).json()
                 pass_idx = TurnMaker.find_pass_option_index(reply)
-                post_url = f"http://{HOST}/player/input?id={player_id}"
+                post_url = f"http://{game_data.host}/player/input?id={player_id}"
                 reply = requests.post(post_url, json={
                     'type': 'or',
                     'index': pass_idx,
@@ -53,16 +55,30 @@ class TurnMaker:
         return False
 
 
+async def new_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(context.args) == 0:
+        await update.message.reply_text(GameCreator.get_usage())
+    else:
+        creator = context.chat_data['CREATOR'] = GameCreator(int(context.args[0]))
+        await context.bot.send_message(chat_id=update.effective_chat.id,
+                                       text=creator.get_header())
+        await update.message.reply_text(creator.get_message())
+
+
+def get_game_data(context: ContextTypes.DEFAULT_TYPE) -> GameData:
+    return context.chat_data['GAME']
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.chat_data['GAME'] = GameData(ST_WAIT_GAME_ID)
     await update.message.reply_text(l18n(context, LK_WAIT_GAME_ID))
 
 
-def get_game_status(game_id):
-    url = build_api_url("spectator", game_id)
+def get_game_status(host, game_id):
+    url = build_api_url(host, "spectator", game_id)
     try:
         return requests.get(url).json()
-    except RuntimeError:
+    except Exception:
         pass
 
 
@@ -91,7 +107,7 @@ async def schedule_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logging.info("Called schedule_pass()")
     # check if we already know id of the user
     user = update.message.from_user
-    data: GameData = context.chat_data['GAME']
+    data: GameData = get_game_data(context)
     logging.info("Current users_info = {}".format(data.users_info))
     user_info = data.users_info.get(user.username)
     # ask to retry with id if unknown and not given
@@ -103,7 +119,7 @@ async def schedule_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logging.info("Setting users_info, now is {}".format(data.users_info))
         except IndexError:
             # TODO l18n
-            msg = ("Нужны твое имя в игре и id (13 символов). "
+            msg = ("Нужны твое имя в игре и id (12-13 символов). "
                    "Для этого скопируй id из адресной строки и скажи /pass <ник> <id>. "
                    "Потом можно будет просто писать /pass")
             await update.effective_message.reply_text(msg)
@@ -118,7 +134,7 @@ async def schedule_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def unschedule_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # NOTE: in fact unschedules any actions
-    data: GameData = context.chat_data['GAME']
+    data: GameData = get_game_data(context)
     username = update.message.from_user.username
     data.scheduled_turns.pop(username)
     await update.effective_message.reply_text(l18n(context, LK_WILL_NOT_PASS))
@@ -127,7 +143,7 @@ async def unschedule_pass(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def callback_timer(context: ContextTypes.DEFAULT_TYPE):
     data: GameData = context.job.data
     logging.info("Timer event: gamedata = {}".format(data))
-    status = get_game_status(data.game_id)
+    status = get_game_status(data.host, data.game_id)
     if not status:
         return
 
@@ -153,50 +169,57 @@ async def callback_timer(context: ContextTypes.DEFAULT_TYPE):
         else:
             last_turn = max([dt.datetime.fromtimestamp(p[1] // 1000) for p in players])
             if (dt.datetime.now() - last_turn) > dt.timedelta(minutes=data.ping_delay_min):
-                who = address_players(context.chat_data['GAME'], [p[0] for p in players])
+                who = address_players(get_game_data(context), [p[0] for p in players])
                 reply_text = f"{who}, {turn_type_str}"
                 data.last_ping = players
-                await context.bot.send_message(chat_id=context.job.chat_id,
+                msg = await context.bot.send_message(chat_id=context.job.chat_id,
                                                text=reply_text)
+                data.message_ids_queue.append((msg.message_id, time.time()))
+                while len(data.message_ids_queue) > MESSAGE_HISTORY:
+                    hmsg = data.message_ids_queue.pop(0)
+                    if (time.time() - hmsg[1]) < MESSAGE_DELETE_TIMEOUT:
+                        await context.bot.delete_message(chat_id=context.job.chat_id,
+                                                         message_id=hmsg[0])
 
 
-async def start_tracking(chat_id, game_id, context: ContextTypes.DEFAULT_TYPE, do_restore=True):
-    st = get_game_status(game_id)
+async def start_tracking(chat_id, host, game_id, context: ContextTypes.DEFAULT_TYPE, do_restore=True):
+    st = get_game_status(host, game_id)
     if st:
         players = get_current_players(st)
         whose = (f"ходит {players[0][0]}"
                  if st["game"]["phase"] not in (PHASE_DRAFTING, PHASE_RESEARCH)
                  else "драфт")
         reply_text = f"Ок, слежу за игрой id={game_id}, сейчас {whose}"  # TODO l18n
+        game_data = get_game_data(context)
         if do_restore:
-            context.chat_data['GAME'].restore()
-        context.chat_data['GAME'].state = ST_TRACKING
+            game_data.restore()
+        game_data.state = ST_TRACKING
         context.job_queue.run_repeating(
             callback_timer, UPDATE_FREQUENCY,
-            data=context.chat_data['GAME'],
+            data=game_data,
             chat_id=chat_id
         )
+        await context.bot.send_message(chat_id=chat_id, text=reply_text)
     else:
-        reply_text = l18n(context, LK_START_GONE_WRONG)
-    await context.bot.send_message(chat_id=chat_id, text=reply_text)
+        raise RuntimeError()
 
 
 async def pause(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'GAME' in context.chat_data:
-        context.chat_data['GAME'].state = ST_PAUSED
+    try:
+        get_game_data(context).state = ST_PAUSED
         await context.job_queue.stop()
         await context.bot.send_message(chat_id=update.effective_chat.id,
                                        text=l18n(context, LK_PAUSE))
-    else:
+    except KeyError:
         await start(update, context)
 
 
 async def unpause(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'GAME' in context.chat_data:
-        game_id = context.chat_data['GAME'].game_id
+    try:
+        data = get_game_data(context)
         await context.job_queue.start()
-        await start_tracking(update.effective_chat.id, game_id, context)
-    else:
+        await start_tracking(update.effective_chat.id, data.host, data.game_id, context)
+    except KeyError:
         await start(update, context)
 
 
@@ -205,7 +228,7 @@ async def turn_on_tagging(update: Update, context: ContextTypes.DEFAULT_TYPE):
     assert 'GAME' in context.chat_data
     try:
         ingame_name = context.args[0]
-        data: GameData = context.chat_data['GAME']
+        data: GameData = get_game_data(context)
         data.users_tag[ingame_name] = user.username
         if user.username not in data.users_info:
             data.users_info[user.username] = [ingame_name, None]
@@ -220,9 +243,10 @@ async def turn_on_tagging(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def turn_off_tagging(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
-    found = context.chat_data['GAME'].users_info.get(user.username)
+    game_data = get_game_data(context)
+    found = game_data.users_info.get(user.username)
     if found:
-        context.chat_data['GAME'].users_tag.pop(found[0])
+        game_data.users_tag.pop(found[0])
         await update.effective_message.reply_text(l18n(context, LK_WILL_NOT_TAG))
     else:
         await update.effective_message.reply_text(l18n(context, LK_NEVER_TAGGED))
@@ -231,28 +255,43 @@ async def turn_off_tagging(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def set_delay(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         v = int(context.args[0])
-        context.chat_data['GAME'].ping_delay_min = v
+        get_game_data(context).ping_delay_min = v
         await update.effective_message.reply_text(l18n(context, LK_DELAY_SET).format(v))
     except (IndexError, ValueError):
         await update.effective_message.reply_text(l18n(context, LK_DELAY_COMMAND_ERROR))
 
 
-async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    if context.chat_data['GAME'].state == ST_WAIT_GAME_ID:
-        if looks_like_player_id(text):
-            await set_id(update, context, text)
-
-
-async def set_id(update: Update, context: ContextTypes.DEFAULT_TYPE, game_id):
+async def set_id(update: Update, context: ContextTypes.DEFAULT_TYPE, host, game_id):
     assert context.chat_data['GAME'].state == ST_WAIT_GAME_ID
     try:
-        context.chat_data['GAME'] = GameData(game_id=game_id, state=None)
-        await start_tracking(update.effective_chat.id, game_id, context, do_restore=False)
+        context.chat_data['GAME'] = GameData(game_id=game_id, host=host, state=None)
+        await start_tracking(update.effective_chat.id, host, game_id, context, do_restore=False)
     except RuntimeError:
         reply_text = l18n(context, LK_START_COMMAND_ERROR)
         await context.bot.send_message(chat_id=update.effective_chat.id,
                                        text=reply_text)
+
+
+async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if get_game_data(context).state == ST_WAIT_GAME_ID:
+        parsed = try_parse_game_url(text)
+        if parsed:
+            host, game_id = parsed
+            await set_id(update, context, host, game_id)
+    elif (creator := context.chat_data.get('CREATOR')) and not creator.started:
+        try:
+            creator.consume_message(text)
+            await update.effective_message.reply_text(creator.get_message())
+        except Exception:
+            await update.effective_message.reply_text("Что-то пошло не так, проверьте формат и название цвета/опции")
+        if creator.started:
+            context.chat_data['GAME'] = GameData(ST_WAIT_GAME_ID)
+            await set_id(update, context, creator.host, creator.game_id)
+    elif orig := update.message.reply_to_message:
+        me = await context.bot.get_me()
+        if orig.from_user.id == me.id:
+            await update.effective_message.reply_text(l18n(context, LK_UNEXPECTED_MESSAGE))
 
 
 async def set_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -277,6 +316,7 @@ def main():
     msg_handler = MessageHandler(filters.TEXT & (~filters.COMMAND), handle_msg)
     app.add_handler(msg_handler)
 
+    app.add_handler(CommandHandler(["new"], new_game))
     app.add_handler(CommandHandler(["start"], start))
     app.add_handler(CommandHandler(["pause"], pause))
     app.add_handler(CommandHandler(["restart", "unpause"], unpause))
