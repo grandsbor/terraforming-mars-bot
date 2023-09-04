@@ -84,6 +84,7 @@ class GameCreator:
             params.update(self.options)
             params['seed'] = random.random()
             params['players'] = []
+            random.shuffle(self.players)
             for idx, player in enumerate(self.players):
                 params['players'].append({
                     "index": idx + 1,

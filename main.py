@@ -61,8 +61,9 @@ async def new_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         creator = context.chat_data['CREATOR'] = GameCreator(int(context.args[0]))
         await context.bot.send_message(chat_id=update.effective_chat.id,
+                                       disable_notification=True,
                                        text=creator.get_header())
-        await update.message.reply_text(creator.get_message())
+        await update.message.reply_text(creator.get_message(), disable_notification=True)
 
 
 def get_game_data(context: ContextTypes.DEFAULT_TYPE) -> GameData:
@@ -282,9 +283,12 @@ async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif (creator := context.chat_data.get('CREATOR')) and not creator.started:
         try:
             creator.consume_message(text)
-            await update.effective_message.reply_text(creator.get_message())
+            await update.effective_message.reply_text(creator.get_message(), disable_notification=True)
         except Exception:
-            await update.effective_message.reply_text("Что-то пошло не так, проверьте формат и название цвета/опции")
+            await update.effective_message.reply_text(
+                "Что-то пошло не так, проверьте формат и название цвета/опции",
+                disable_notification=True
+            )
         if creator.started:
             context.chat_data['GAME'] = GameData(ST_WAIT_GAME_ID)
             await set_id(update, context, creator.host, creator.game_id)
