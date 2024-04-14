@@ -56,6 +56,8 @@ class TurnMaker:
 
 
 async def new_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if 'GAME' in context.chat_data:
+        context.chat_data.pop('GAME')
     if len(context.args) == 0:
         await update.message.reply_text(GameCreator.get_usage())
     else:
