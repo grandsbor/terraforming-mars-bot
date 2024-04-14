@@ -15,6 +15,8 @@ ACCEPTED_OPTIONS = {
     "луна": "moonExpansion",
     "промо": "promoCardsOption",
     "следопыты": "pathfinders",
+    "венера-must": "requiresVenusTrackCompletion",
+    "венера-альт": "altVenusBoard",
 }
 
 
