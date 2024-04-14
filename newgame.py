@@ -11,8 +11,10 @@ ACCEPTED_OPTIONS = {
     "венера": "venusNext",
     "колонии": "colonies",
     "прологи": "prelude",
+    "прологи2": "prelude2",
     "луна": "moonExpansion",
     "промо": "promoCardsOption",
+    "следопыты": "pathfinders",
 }
 
 
