@@ -152,9 +152,10 @@ async def callback_timer(context: ContextTypes.DEFAULT_TYPE):
 
     if ans := data.tft.check(status):
         oceans, oxygen, temp = ans
-        await context.bot.send_message(chat_id=context.job.chat_id,
-                                       parse_mode='Markdown',
-                                       text=data.tft.make_message(context, oceans, oxygen, temp))
+        msg = await context.bot.send_message(chat_id=context.job.chat_id,
+                                             parse_mode='Markdown',
+                                             text=data.tft.make_message(context, oceans, oxygen, temp))
+        data.message_ids_queue.append((msg.message_id, time.time()))
 
     phase = status['game']['phase']
     if phase == PHASE_DRAFTING:
